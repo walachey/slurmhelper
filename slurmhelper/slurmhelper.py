@@ -30,6 +30,7 @@ class SLURMJob():
     n_nodes = 1
     n_tasks = 1
     n_cpus = 1
+    n_gpus = 0
     max_memory = "2GB"
     time_limit = datetime.timedelta(hours=1)
     partition = None
@@ -173,6 +174,8 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
             partition = []
             if self.partition is not None:
                 partition = ["--partition", self.partition]
+            elif self.n_gpus > 0:
+                partition = ["--partition", "gpu"]
             command = ["sbatch"] + partition + [self.batch_dir + f]
             p = Popen(command, stdin=PIPE, stdout=PIPE, stderr=PIPE)
             _, error = p.communicate()
@@ -240,6 +243,9 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
             qos_string = ""
             if self.qos:
                 qos_string = f"#SBATCH --qos={self.qos}"
+            gpu_string = ""
+            if self.n_gpus > 0:
+                gpu_string = f"#SBATCH --gres=gpu:{self.n_gpus}\nmodule load CUDA"
             sbatch = f"""#!/bin/bash
 #SBATCH --job-name={self.name}_{idx:04d}
 #SBATCH --error={self.log_dir}job_{idx:04d}.error.txt
@@ -250,6 +256,7 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
 #SBATCH --ntasks-per-node={self.n_tasks}
 #SBATCH --cpus-per-task={self.n_cpus}
 {qos_string}
+{gpu_string}
 
 cd {self.job_dir}
 {self.command} run_job.py {output_filename} {args_string} && rm {batch_filename}
