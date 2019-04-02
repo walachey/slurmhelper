@@ -286,17 +286,24 @@ cd {self.job_dir}
         else:
             print("Jobs not created. Try --createjobs.")
 
+    def print_log(self):
+        files = list(sorted((f for f in os.listdir(self.log_dir) if f.endswith(".txt"))))
+        for filename in files:
+            with open(self.log_dir + filename, 'r') as f:
+                print(f.read())
+
     def __call__(self):
         self.check_program_arguments()
 
     def check_program_arguments(self):
         import argparse
-        parser = argparse.ArgumentParser(description='Tracker management.')
+        parser = argparse.ArgumentParser(description='Easy SLURM job management.')
         parser.add_argument("--createjobs", action='store_true', help="Create batch scripts to be used with SLURM.")
         parser.add_argument("--cancel", action='store_true', help="Cancel running jobs.")
         parser.add_argument("--run", action='store_true', help="Run remaining jobs.")
         parser.add_argument("--clean", action='store_true', help="Clean up log/batch directory (not results, though.).")
         parser.add_argument("--status", action='store_true', help="Print status.")
+        parser.add_argument("--log", action='store_true', help="Prints the last log messages.")
         args = parser.parse_args()
 
         if not any(vars(args).values()):
@@ -315,6 +322,8 @@ cd {self.job_dir}
 
         if args.status:
             self.print_status()
+        if args.log:
+            self.print_log()
 
 
 
