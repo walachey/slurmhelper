@@ -292,6 +292,18 @@ cd {self.job_dir}
             with open(self.log_dir + filename, 'r') as f:
                 print(f.read())
 
+    def print_results(self):
+        files = list(sorted((f for f in os.listdir(self.output_dir) if f.endswith(".zip"))))
+        for filename in files:
+            with zipfile.ZipFile(self.output_dir + filename, mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
+                with zf.open("results.dill", "r") as f:
+                    results = dill.load(f)
+                with zf.open("kwargs.dill", "r") as f:
+                    kwargs = dill.load(f)
+                print("== Results {} {}".format(filename[:-4], "=" * 20))
+                print("    \t{}\n--->\t{}".format(str(kwargs), str(results)))
+
+
     def __call__(self):
         self.check_program_arguments()
 
@@ -304,6 +316,7 @@ cd {self.job_dir}
         parser.add_argument("--clean", action='store_true', help="Clean up log/batch directory (not results, though.).")
         parser.add_argument("--status", action='store_true', help="Print status.")
         parser.add_argument("--log", action='store_true', help="Prints the last log messages.")
+        parser.add_argument("--results", action='store_true', help="Naively prints the result output of the last jobs.")
         args = parser.parse_args()
 
         if not any(vars(args).values()):
@@ -324,6 +337,8 @@ cd {self.job_dir}
             self.print_status()
         if args.log:
             self.print_log()
+        if args.results:
+            self.print_results()
 
 
 
