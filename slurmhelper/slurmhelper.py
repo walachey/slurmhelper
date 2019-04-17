@@ -213,7 +213,7 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
         skipped = 0
         self.clear_batch_files()
         time_limit = self.time_limit.total_seconds()
-        H, M, S = time_limit // 3600, time_limit // 60, time_limit % 60
+        H, M, S = time_limit // 3600, time_limit % (60 * 60) // 60, time_limit % 60
         time_limit = "{:02d}:{:02d}:{:02d}".format(int(H), int(M), int(S))
         for idx, args in enumerate(self.job_args):
             batch_filename = self.batch_dir + "job_{:04d}.sbatch".format(idx)
