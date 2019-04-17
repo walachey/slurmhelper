@@ -28,7 +28,7 @@ class SLURMJob():
 
     command = "python3"
     n_nodes = 1
-    n_tasks = 1
+    n_tasks = None
     n_cpus = 1
     n_gpus = 0
     max_memory = "2GB"
@@ -246,6 +246,9 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
             gpu_string = ""
             if self.n_gpus > 0:
                 gpu_string = f"#SBATCH --gres=gpu:{self.n_gpus}\nmodule load CUDA"
+            task_limit_string = ""
+            if self.n_tasks is not None and self.n_tasks > 0:
+                task_limit_string = f"#SBATCH --ntasks-per-node={self.n_tasks}"
             sbatch = f"""#!/bin/bash
 #SBATCH --job-name={self.name}_{idx:04d}
 #SBATCH --error={self.log_dir}job_{idx:04d}.error.txt
@@ -253,10 +256,10 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
 #SBATCH --time={time_limit}
 #SBATCH --mem={self.max_memory}
 #SBATCH --nodes={self.n_nodes}
-#SBATCH --ntasks-per-node={self.n_tasks}
 #SBATCH --cpus-per-task={self.n_cpus}
 {qos_string}
 {gpu_string}
+{task_limit_string}
 
 cd {self.job_dir}
 {self.command} run_job.py {output_filename} {args_string} && rm {batch_filename}
