@@ -139,13 +139,14 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
             count += len([f for f in os.listdir(dir) if f.endswith(".zip")])
         return count
 
-    def get_running_jobs(self):
+    def get_running_jobs(self, state=""):
         from subprocess import Popen, PIPE
-        output, _ = Popen([f'squeue --format="%j" | grep {self.name}'], stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=True).communicate()
+        state = "" if not state else f"-t {state}"
+        output, _ = Popen([f'squeue --format="%j" {state} | grep {self.name}'], stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=True).communicate()
         return [f for f in output.decode("ascii").split("\n") if f]
 
-    def get_running_job_count(self):
-        return len(self.get_running_jobs())
+    def get_running_job_count(self, state=""):
+        return len(self.get_running_jobs(state=state))
 
     def cancel_running_jobs(self):
         jobs = self.get_running_jobs()
@@ -283,8 +284,9 @@ cd {self.job_dir}
         print(f"Resources per task: nodes: {self.n_nodes}, tasks: {self.n_tasks}, cpus: {self.n_cpus}, memory: {self.max_memory}")
         print("Time limit per job: {}".format(self.time_limit))
         if os.path.isdir(self.job_dir):
-            n_open, n_done, n_running = self.get_open_job_count(), self.get_finished_job_count(), self.get_running_job_count()
-            print("Jobs prepared: {} (running: {})".format(n_open, n_running))
+            n_open, n_done, n_submitted = self.get_open_job_count(), self.get_finished_job_count(), self.get_running_job_count()
+            n_pending, n_running = self.get_running_job_count("PD"), self.get_running_job_count("R")
+            print("Jobs prepared: {} (running: {}, pending: {}, total queued: {})".format(n_open, n_running, n_pending, n_submitted))
             print("Jobs done: {}".format(n_done))
         else:
             print("Jobs not created. Try --createjobs.")
