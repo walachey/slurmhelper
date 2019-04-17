@@ -281,7 +281,7 @@ cd {self.job_dir}
             print("Using default QOS (see sqos).")
         else:
             print("Using QOS: {}".format(self.qos))
-        print(f"Resources per task: nodes: {self.n_nodes}, tasks: {self.n_tasks}, cpus: {self.n_cpus}, memory: {self.max_memory}")
+        print(f"Resources per task: nodes: {self.n_nodes}, task limit: {self.n_tasks}, cpus: {self.n_cpus}, memory: {self.max_memory}")
         print("Time limit per job: {}".format(self.time_limit))
         if os.path.isdir(self.job_dir):
             n_open, n_done, n_submitted = self.get_open_job_count(), self.get_finished_job_count(), self.get_running_job_count()
