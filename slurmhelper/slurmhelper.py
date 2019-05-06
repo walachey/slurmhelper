@@ -297,17 +297,32 @@ cd {self.job_dir}
             with open(self.log_dir + filename, 'r') as f:
                 print(f.read())
 
+    def get_result_filenames(self):
+        return list(sorted((f for f in os.listdir(self.output_dir) if f.endswith(".zip"))))
+
+    def load_kwargs_results_from_result_file(self, filename):
+        with zipfile.ZipFile(self.output_dir + filename, mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
+            with zf.open("results.dill", "r") as f:
+                results = dill.load(f)
+            with zf.open("kwargs.dill", "r") as f:
+                kwargs = dill.load(f)
+            return kwargs, results
+
     def print_results(self):
-        files = list(sorted((f for f in os.listdir(self.output_dir) if f.endswith(".zip"))))
+        files = self.get_result_filenames()
         for filename in files:
-            with zipfile.ZipFile(self.output_dir + filename, mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
-                with zf.open("results.dill", "r") as f:
-                    results = dill.load(f)
-                with zf.open("kwargs.dill", "r") as f:
-                    kwargs = dill.load(f)
+                kwargs, results = self.load_kwargs_results_from_result_file(filename)
                 print("== Results {} {}".format(filename[:-4], "=" * 20))
                 print("    \t{}\n--->\t{}".format(str(kwargs), str(results)))
-
+    
+    def items(self):
+        if self.get_open_job_count() > 0:
+            raise ValueError("Some jobs are not completed yet.")
+        if self.get_finished_job_count() == 0:
+            raise ValueError("There are no finished jobs.")
+        for filename in self.get_result_filenames():
+            kwargs, results = self.load_kwargs_results_from_result_file(filename)
+            yield kwargs, results
 
     def __call__(self):
         self.check_program_arguments()
