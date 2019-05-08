@@ -35,6 +35,7 @@ class SLURMJob():
     time_limit = datetime.timedelta(hours=1)
     partition = None
     qos = None
+    concurrent_job_limit = None
 
     _job_file = None
     _job_fun_code = None
@@ -88,14 +89,17 @@ class SLURMJob():
             job_definition = 'sys.path.append("{}")\nimport {} as job'.format(*self.get_original_job_path_filename(), self._job_file)
         job_file = """
 import sys, warnings, zipfile, dill
-results_filename = sys.argv[1]
-args = sys.argv[2::]
-if len(args) % 2 != 0:
-    print("Wrong number of args!")
+job_id = int(sys.argv[1])
+results_filename = "{}".format(job_id)
+input_filename = "{}".format(job_id)
+
+if len(sys.argv) > 2:
+    print("Too many arguments.")
     exit(1)
-kwargs = dict()
-for i in range(0, len(args) - 1, 2):
-    kwargs[args[i]] = args[i+1]
+
+with open(input_filename, "rb") as f:
+    kwargs = dill.load(f)
+
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore",category=DeprecationWarning)
     {}
@@ -106,7 +110,9 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
             dill.dump(results, f)
     with zf.open("kwargs.dill", "w") as f:
             dill.dump(kwargs, f)
-""".format(job_definition, job_fun_name)
+""".format(self._get_output_filename_format_string(),
+            self._get_input_filename_format_string(),
+            job_definition, job_fun_name)
 
         with open(self.job_filename, "w") as f:
             f.write(job_file)
@@ -124,11 +130,11 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
         return self.job_dir + "log/"
 
     @property   
-    def batch_dir(self):
+    def input_dir(self):
         return self.job_dir + "jobs/"
 
     def get_open_job_count(self):
-        return len([f for f in os.listdir(self.batch_dir) if f.endswith(".sbatch")])
+        return len([f for f in os.listdir(self.input_dir) if f.endswith(".dill")])
 
     def get_finished_job_directories(self):
         return itertools.chain((self.output_dir,), self.additional_output_dirs)
@@ -142,7 +148,7 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
     def get_running_jobs(self, state=""):
         from subprocess import Popen, PIPE
         state = "" if not state else f"-t {state}"
-        output, _ = Popen([f'squeue --format="%j" {state} | grep {self.name}'], stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=True).communicate()
+        output, _ = Popen([f'squeue -r --format="%j" {state} | grep {self.name}'], stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=True).communicate()
         return [f for f in output.decode("ascii").split("\n") if f]
 
     def get_running_job_count(self, state=""):
@@ -163,62 +169,80 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
         if self.get_running_job_count() != 0:
             print("Jobs are currently running! Aborting.")
             return
-        jobs = os.listdir(self.batch_dir)
+        jobs = os.listdir(self.input_dir)
         if len(jobs) == 0:
             print("No prepared jobs to be run.")
             return
-            
-        from subprocess import Popen, PIPE
-        for f in progress_bar(jobs):
-            if not f.endswith(".sbatch"):
+        
+        # Collect job array indices to run.
+        indices = []
+        for f in jobs:
+            if not f.endswith(".dill"):
                 continue
-            partition = []
-            if self.partition is not None:
-                partition = ["--partition", self.partition]
-            elif self.n_gpus > 0:
-                partition = ["--partition", "gpu"]
-            command = ["sbatch"] + partition + [self.batch_dir + f]
-            p = Popen(command, stdin=PIPE, stdout=PIPE, stderr=PIPE)
-            _, error = p.communicate()
-            
-            if p.returncode != 0:
-                print("Running job failed with error: ")
-                if error:
-                    print(error.decode("ascii"))
-                print("Not running more jobs.")
-                return
+            idx = int(f[:-5].split("_")[-1])
+            indices.append("{:d}".format(idx))
+        
+        limit_concurrent_flag = f"%{self.concurrent_job_limit}" if self.concurrent_job_limit else ""
+        array_command = "--array=" + ",".join(indices) + limit_concurrent_flag
+        self.write_batch_file(job_array_settings=array_command)
 
-    def clear_batch_files(self):
-        for f in os.listdir(self.batch_dir):
-            if f.endswith(".sbatch"):
-                os.remove(self.batch_dir + f)
+        command = ["sbatch"] + [self.batch_filename]
+
+        from subprocess import Popen, PIPE
+        p = Popen(command, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+        _, error = p.communicate()
+            
+        if p.returncode != 0:
+            print("Running jobs failed with error: ")
+            if error:
+                print(error.decode("ascii"))
+            print("Job command was: " + " ".join(command))
+
+    def clear_input_files(self):
+        try:
+            for f in os.listdir(self.input_dir):
+                if f.endswith(".dill"):
+                    os.remove(self.input_dir + f)
+        except FileNotFoundError:
+            pass
 
     def clear_log_dir(self):
-        for f in os.listdir(self.log_dir):
-            if f.endswith(".txt"):
-                os.remove(self.log_dir + f)
+        try:
+            for f in os.listdir(self.log_dir):
+                if f.endswith(".txt"):
+                    os.remove(self.log_dir + f)
+        except FileNotFoundError:
+            pass
 
     def ensure_directories(self):
         try_make_dir(self.job_dir)
         try_make_dir(self.output_dir)
         try_make_dir(self.log_dir)
-        try_make_dir(self.batch_dir)
+        try_make_dir(self.input_dir)
 
     def clear_helper_directories(self):
-        self.clear_batch_files()
+        self.clear_input_files()
         self.clear_log_dir()
 
-    def write_batch_files(self):
+    def _get_output_filename_format_string(self):
+        return f"{self.output_dir}/" + "job_{:04d}.zip"
+
+    def _get_output_filename_for_job_id(self, job_id):
+        output_filename_tail = f"job_{job_id:04d}.zip"
+        output_filename = f"{self.output_dir}/{output_filename_tail}"
+        return output_filename, output_filename_tail
+
+    def _get_input_filename_format_string(self):
+        return self.input_dir + "/job_{:04d}.dill"
+
+    def write_input_files(self):
         created = 0
         skipped = 0
-        self.clear_batch_files()
-        time_limit = self.time_limit.total_seconds()
-        H, M, S = time_limit // 3600, time_limit % (60 * 60) // 60, time_limit % 60
-        time_limit = "{:02d}:{:02d}:{:02d}".format(int(H), int(M), int(S))
-        for idx, args in enumerate(self.job_args):
-            batch_filename = self.batch_dir + "job_{:04d}.sbatch".format(idx)
-            output_filename_tail = f"job_{idx:04d}.zip"
-            output_filename = f"{self.output_dir}/{output_filename_tail}"
+        self.clear_input_files()
+
+        for idx, args in progress_bar(enumerate(self.job_args)):
+            input_filename = self.input_dir + "job_{:04d}.dill".format(idx)
+            _, output_filename_tail = self._get_output_filename_for_job_id(idx)
 
             found = False
             # Check if valid results exist.
@@ -237,38 +261,62 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
                 continue
             else:
                 created += 1
+            
+            with open(input_filename, "wb") as f:
+                dill.dump(args, f)
 
-            args_string = ""
-            for arg, val in args.items():
-                args_string += '"{}" "{}"'.format(arg, val)
-            qos_string = ""
-            if self.qos:
-                qos_string = f"#SBATCH --qos={self.qos}"
-            gpu_string = ""
-            if self.n_gpus > 0:
-                gpu_string = f"#SBATCH --gres=gpu:{self.n_gpus}\nmodule load CUDA"
-            task_limit_string = ""
-            if self.n_tasks is not None and self.n_tasks > 0:
-                task_limit_string = f"#SBATCH --ntasks-per-node={self.n_tasks}"
-            sbatch = f"""#!/bin/bash
-#SBATCH --job-name={self.name}_{idx:04d}
-#SBATCH --error={self.log_dir}job_{idx:04d}.error.txt
-#SBATCH --output={self.log_dir}job_{idx:04d}.log.txt
+        print("Files created: {}, skipped: {}.".format(created, skipped))
+
+    @property
+    def batch_filename(self):
+        return self.job_dir + "/job_definition.sbatch"
+
+    def write_batch_file(self, job_array_settings=None):
+        time_limit = self.time_limit.total_seconds()
+        H, M, S = time_limit // 3600, time_limit % (60 * 60) // 60, time_limit % 60
+        time_limit = "{:02d}:{:02d}:{:02d}".format(int(H), int(M), int(S))
+
+        qos_string = ""
+        if self.qos:
+            qos_string = f"#SBATCH --qos={self.qos}"
+        gpu_string = ""
+        if self.n_gpus > 0:
+            gpu_string = f"#SBATCH --gres=gpu:{self.n_gpus}\nmodule load CUDA"
+        task_limit_string = ""
+        if self.n_tasks is not None and self.n_tasks > 0:
+            task_limit_string = f"#SBATCH --ntasks-per-node={self.n_tasks}"
+        if job_array_settings:
+            job_array_settings = "#SBATCH " + job_array_settings
+        else:
+            job_array_settings = ""
+
+        partition_string = ""
+        if self.partition is not None:
+            partition_string = f"#SBATCH --partition={self.partition}"
+        elif self.n_gpus > 0:
+            partition_string = "#SBATCH --partition=gpu"
+
+        sbatch = f"""#!/bin/bash
+#SBATCH --job-name={self.name}
+#SBATCH --error={self.log_dir}job_%a.error.txt
+#SBATCH --output={self.log_dir}job_%a.log.txt
 #SBATCH --time={time_limit}
 #SBATCH --mem={self.max_memory}
 #SBATCH --nodes={self.n_nodes}
 #SBATCH --cpus-per-task={self.n_cpus}
+{partition_string}
 {qos_string}
 {gpu_string}
 {task_limit_string}
+{job_array_settings}
 
+formatted_job_id=`printf %04d ${{SLURM_ARRAY_TASK_ID}}`
 cd {self.job_dir}
-{self.command} run_job.py {output_filename} {args_string} && rm {batch_filename}
+{self.command} run_job.py ${{SLURM_ARRAY_TASK_ID}} && rm {self.input_dir}+job_${{formatted_job_id}}.dill
 """
-            with open(batch_filename, "w") as f:
-                f.write(sbatch)
+        with open(self.batch_filename, "w") as f:
+            f.write(sbatch)
 
-        print("Files created: {}, skipped: {}.".format(created, skipped))
 
     def print_status(self):
         print("Job {}, residing in {}".format(self.name, self.job_dir))
@@ -348,7 +396,8 @@ cd {self.job_dir}
         if args.createjobs:
             self.ensure_directories()
             self.write_job_file()
-            self.write_batch_files()
+            self.write_input_files()
+            
 
         if args.run:
             self.run_jobs()
