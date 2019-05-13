@@ -312,7 +312,7 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
 
 formatted_job_id=`printf %04d ${{SLURM_ARRAY_TASK_ID}}`
 cd {self.job_dir}
-{self.command} run_job.py ${{SLURM_ARRAY_TASK_ID}} && rm {self.input_dir}+job_${{formatted_job_id}}.dill
+{self.command} run_job.py ${{SLURM_ARRAY_TASK_ID}} && rm {self.input_dir}job_${{formatted_job_id}}.dill
 """
         with open(self.batch_filename, "w") as f:
             f.write(sbatch)
