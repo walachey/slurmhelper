@@ -363,8 +363,8 @@ cd {self.job_dir}
                 print("== Results {} {}".format(filename[:-4], "=" * 20))
                 print("    \t{}\n--->\t{}".format(str(kwargs), str(results)))
     
-    def items(self):
-        if self.get_open_job_count() > 0:
+    def items(self, ignore_open_jobs=False):
+        if not ignore_open_jobs and (self.get_open_job_count() > 0):
             raise ValueError("Some jobs are not completed yet.")
         if self.get_finished_job_count() == 0:
             raise ValueError("There are no finished jobs.")
