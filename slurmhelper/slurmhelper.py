@@ -148,8 +148,10 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
     def get_running_jobs(self, state=""):
         from subprocess import Popen, PIPE
         state = "" if not state else f"-t {state}"
-        output, _ = Popen([f'squeue -r --format="%j" {state} | grep {self.name}'], stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=True).communicate()
-        return [f for f in output.decode("ascii").split("\n") if f]
+        output, _ = Popen([f'squeue -r --format="%A %F %j" {state} | grep {self.name}'], stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=True).communicate()
+        output = [f for f in output.decode("ascii").split("\n") if f]
+        output = [f.split(" ") for f in output]
+        return output
 
     def get_running_job_count(self, state=""):
         return len(self.get_running_jobs(state=state))
@@ -159,9 +161,11 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
         if len(jobs) == 0:
             print("No jobs are currently running.")
             return
-        print("Cancelling running jobs...")
+        unique_job_array_ids = set([job[1] for job in jobs])
+        print("Cancelling {} running jobs from {} array(s)...".format(len(jobs), len(unique_job_array_ids)))
+
         from subprocess import Popen, PIPE
-        output, _ = Popen(["scancel", "--name", ",".join(jobs)], stdin=PIPE, stdout=PIPE, stderr=PIPE).communicate()
+        output, _ = Popen(["scancel", ",".join(unique_job_array_ids)], stdin=PIPE, stdout=PIPE, stderr=PIPE).communicate()
         if output:
             print(output.decode("ascii"))
 
@@ -403,6 +407,9 @@ cd {self.job_dir}
         if not any(vars(args).values()):
             parser.error('No action requested, try --help.')
         
+        if args.cancel:
+            self.cancel_running_jobs()
+            
         if args.clean:
             self.clear_helper_directories()
 
@@ -410,7 +417,6 @@ cd {self.job_dir}
             self.ensure_directories()
             self.write_job_file()
             self.write_input_files()
-            
 
         if args.run:
             self.run_jobs()
