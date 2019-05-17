@@ -180,10 +180,23 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
             if not f.endswith(".dill"):
                 continue
             idx = int(f[:-5].split("_")[-1])
-            indices.append("{:d}".format(idx))
-        
+            indices.append(idx)
+        # Combine consecutive sequences into one index pair (i.e. 1, 2, 3 becomes "1-3").
+        def format_consecutive_sequences(indices):
+            from itertools import groupby
+            from operator import itemgetter
+            indices = list(sorted(indices))
+            formatted_indices = []
+            for _, g in groupby(enumerate(indices), lambda t: t[0]-t[1]):
+                g = list(map(itemgetter(1), g))
+                del g[1:-1]
+                g = "-".join(map(str, g))
+                formatted_indices.append(g)
+            return ",".join(formatted_indices)
+        indices = format_consecutive_sequences(indices)
+
         limit_concurrent_flag = f"%{self.concurrent_job_limit}" if self.concurrent_job_limit else ""
-        array_command = "--array=" + ",".join(indices) + limit_concurrent_flag
+        array_command = "--array=" + indices + limit_concurrent_flag
         self.write_batch_file(job_array_settings=array_command)
 
         command = ["sbatch"] + [self.batch_filename]
