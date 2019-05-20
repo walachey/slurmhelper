@@ -36,6 +36,9 @@ class SLURMJob():
     partition = None
     qos = None
     concurrent_job_limit = None
+    # If set, jobs that exceed the max job array size will the split into multiple arrays.
+    # Should be at most MaxArraySize.
+    max_job_array_size = "auto"
 
     _job_file = None
     _job_fun_code = None
@@ -185,6 +188,9 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
                 continue
             idx = int(f[:-5].split("_")[-1])
             indices.append(idx)
+        indices = list(sorted(indices))
+        total_job_count = len(indices)
+
         # Combine consecutive sequences into one index pair (i.e. 1, 2, 3 becomes "1-3").
         def format_consecutive_sequences(indices):
             from itertools import groupby
@@ -197,23 +203,52 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
                 g = "-".join(map(str, g))
                 formatted_indices.append(g)
             return ",".join(formatted_indices)
-        indices = format_consecutive_sequences(indices)
 
-        limit_concurrent_flag = f"%{self.concurrent_job_limit}" if self.concurrent_job_limit else ""
-        array_command = "--array=" + indices + limit_concurrent_flag
-        self.write_batch_file(job_array_settings=array_command)
+        if self.max_job_array_size == "auto":
+            try:
+                from subprocess import Popen, PIPE
+                output, _ = Popen(["scontrol show config | sed -n '/^MaxArraySize/s/.*= *//p'"], stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=True).communicate()
+                max_job_array_size = int(output.decode("ascii")) - 1
+            except Exception as e:
+                print("Error while querying scontrol for 'MaxArraySize': {}".format(str(e)))
+        else:
+            max_job_array_size = self.max_job_array_size        
 
-        command = ["sbatch"] + [self.batch_filename]
+        # Split very large jobs into multiple job arrays.
+        index_groups = [indices]
+        if max_job_array_size is not None and len(indices) > max_job_array_size:
+            index_groups = []
+            while len(indices) > 0:
+                one_job_indices = indices[:max_job_array_size]
+                del indices[:max_job_array_size]
+                index_groups.append(one_job_indices)
+        
+        self.write_batch_file(job_array_settings=None)
 
-        from subprocess import Popen, PIPE
-        p = Popen(command, stdin=PIPE, stdout=PIPE, stderr=PIPE)
-        _, error = p.communicate()
-            
-        if p.returncode != 0:
-            print("Running jobs failed with error: ")
-            if error:
-                print(error.decode("ascii"))
-            print("Job command was: " + " ".join(command))
+        for idx, indices in enumerate(index_groups):
+            min_index = min(indices)
+            indices = [i-min_index for i in indices]
+
+            limit_concurrent_flag = f"%{self.concurrent_job_limit}" if self.concurrent_job_limit else ""
+            array_command = "--array=" + format_consecutive_sequences(indices) + limit_concurrent_flag
+            environment_vars = "--export=ALL,JOB_ARRAY_OFFSET={}".format(min_index)
+            command = ["sbatch"] + [array_command] + [environment_vars] + [self.batch_filename]
+
+            from subprocess import Popen, PIPE
+            p = Popen(command, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+            _, error = p.communicate()
+                
+            if p.returncode != 0:
+                print("Running jobs failed with error: ")
+                if error:
+                    print(error.decode("ascii"))
+                print("Job command was: " + " ".join(command))
+            else:
+                print("Submitted job array {} of {} (i.e. {} of {} jobs).".format(
+                    idx + 1, len(index_groups),
+                    len(indices), total_job_count))
+                break
+        
 
     def clear_input_files(self):
         try:
@@ -315,8 +350,8 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
 
         sbatch = f"""#!/bin/bash
 #SBATCH --job-name={self.name}
-#SBATCH --error={self.log_dir}job_%a.error.txt
-#SBATCH --output={self.log_dir}job_%a.log.txt
+#SBATCH --error={self.log_dir}job_%a_%A.error.txt
+#SBATCH --output={self.log_dir}job_%a_%A.log.txt
 #SBATCH --time={time_limit}
 #SBATCH --mem={self.max_memory}
 #SBATCH --nodes={self.n_nodes}
@@ -326,10 +361,11 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
 {gpu_string}
 {task_limit_string}
 {job_array_settings}
-
-formatted_job_id=`printf %04d ${{SLURM_ARRAY_TASK_ID}}`
+# JOB_ARRAY_OFFSET needs to be passed to sbatch (e.g. --export=ALL,JOB_ARRAY_OFFSET=0).
+sub_job_id=$(($SLURM_ARRAY_TASK_ID + $JOB_ARRAY_OFFSET))
+formatted_job_id=`printf %04d ${{sub_job_id}}`
 cd {self.job_dir}
-{self.command} run_job.py ${{SLURM_ARRAY_TASK_ID}} && rm {self.input_dir}job_${{formatted_job_id}}.dill
+{self.command} run_job.py ${{sub_job_id}} && rm {self.input_dir}job_${{formatted_job_id}}.dill
 """
         with open(self.batch_filename, "w") as f:
             f.write(sbatch)
@@ -346,8 +382,12 @@ cd {self.job_dir}
             print("Using default QOS (see sqos).")
         else:
             print("Using QOS: {}".format(self.qos))
+        if self.max_job_array_size == "auto":
+            print("Automatically chunking large jobs into smaller job arrays.")
+        else:
+            print(f"Splitting up job arrays larger than {self.max_job_array_size}")
         print(f"Resources per task: nodes: {self.n_nodes}, task limit: {self.n_tasks}, cpus: {self.n_cpus}, memory: {self.max_memory}")
-        print("Time limit per job: {}".format(self.time_limit))
+        print("Time limit per job: {}, concurrent job limit: {}".format(self.time_limit, self.concurrent_job_limit))
         if os.path.isdir(self.job_dir):
             n_open, n_done, n_submitted = self.get_open_job_count(), self.get_finished_job_count(), self.get_running_job_count()
             n_pending, n_running = self.get_running_job_count("PD"), self.get_running_job_count("R")
