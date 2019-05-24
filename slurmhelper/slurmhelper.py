@@ -216,15 +216,27 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
 
         # Split very large jobs into multiple job arrays.
         index_groups = [indices]
-        if max_job_array_size is not None and len(indices) > max_job_array_size:
+        if max_job_array_size is not None:
             index_groups = []
+            jobs_remaining = max_job_array_size
             while len(indices) > 0:
-                one_job_indices = indices[:max_job_array_size]
-                del indices[:max_job_array_size]
+                # Split into chunks where each chunk's index differences are bounded.
+                first_index_value = indices[0]
+                n_indices_in_chunk = max_job_array_size
+                for idx, index_value in enumerate(indices):
+                    if (index_value - first_index_value) > max_job_array_size:
+                        n_indices_in_chunk = idx
+                        break
+                if jobs_remaining > 0:
+                    n_indices_in_chunk = min(jobs_remaining, n_indices_in_chunk)
+                jobs_remaining -= n_indices_in_chunk
+                one_job_indices = indices[:n_indices_in_chunk]
+                del indices[:n_indices_in_chunk]
                 index_groups.append(one_job_indices)
         
         self.write_batch_file(job_array_settings=None)
 
+        total_submitted_jobs = 0
         for idx, indices in enumerate(index_groups):
             min_index = min(indices)
             indices = [i-min_index for i in indices]
@@ -247,7 +259,9 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
                 print("Submitted job array {} of {} (i.e. {} of {} jobs).".format(
                     idx + 1, len(index_groups),
                     len(indices), total_job_count))
-                break
+                total_submitted_jobs += len(indices)
+                if total_submitted_jobs >= max_job_array_size:
+                    break
         
 
     def clear_input_files(self):
