@@ -151,8 +151,8 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
     def get_running_jobs(self, state=""):
         from subprocess import Popen, PIPE
         state = "" if not state else f"-t {state}"
-        output, _ = Popen([f'squeue -r --format="%A %F %j" {state} | grep {self.name}'], stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=True).communicate()
-        output = [f for f in output.decode("ascii").split("\n") if f]
+        output, _ = Popen([f'squeue -r --format="%A %F %j" {state} --name="{self.name}"'], stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=True).communicate()
+        output = [f for f in output.decode("ascii").split("\n")[1:] if f] # Skip the header line.
         output = [f.split(" ") for f in output]
         return output
 
