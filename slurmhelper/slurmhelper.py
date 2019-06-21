@@ -174,7 +174,7 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
 
     def run_jobs(self):
         if self.get_running_job_count() != 0:
-            print("Jobs are currently running! Aborting.")
+            print("Jobs are currently in the queue or running! Aborting.")
             return
         jobs = os.listdir(self.input_dir)
         if len(jobs) == 0:
