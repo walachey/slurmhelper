@@ -35,6 +35,7 @@ class SLURMJob():
     time_limit = datetime.timedelta(hours=1)
     partition = None
     qos = None
+    nice = None
     concurrent_job_limit = None
     # If set, jobs that exceed the max job array size will the split into multiple arrays.
     # Should be at most MaxArraySize.
@@ -355,7 +356,9 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
             job_array_settings = "#SBATCH " + job_array_settings
         else:
             job_array_settings = ""
-
+        nice_value_string = ""
+        if self.nice is not None:
+            nice_value_string = f"#SBATCH --nice={self.nice}"
         partition_string = ""
         if self.partition is not None:
             partition_string = f"#SBATCH --partition={self.partition}"
@@ -375,6 +378,7 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
 {gpu_string}
 {task_limit_string}
 {job_array_settings}
+{nice_value_string}
 # JOB_ARRAY_OFFSET needs to be passed to sbatch (e.g. --export=ALL,JOB_ARRAY_OFFSET=0).
 sub_job_id=$(($SLURM_ARRAY_TASK_ID + $JOB_ARRAY_OFFSET))
 formatted_job_id=`printf %04d ${{sub_job_id}}`
