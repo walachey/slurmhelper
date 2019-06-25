@@ -173,7 +173,7 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
         if output:
             print(output.decode("ascii"))
 
-    def run_jobs(self):
+    def run_jobs(self, max_jobs=None):
         if self.get_running_job_count() != 0:
             print("Jobs are currently in the queue or running! Aborting.")
             return
@@ -214,6 +214,9 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
                 print("Error while querying scontrol for 'MaxArraySize': {}".format(str(e)))
         else:
             max_job_array_size = self.max_job_array_size        
+        # User can overwrite max. job limit from command line.
+        if max_jobs is not None and max_jobs > 0:
+            max_job_array_size = max_jobs
 
         # Split very large jobs into multiple job arrays.
         index_groups = [indices]
@@ -460,6 +463,7 @@ cd {self.job_dir}
         parser.add_argument("--status", action='store_true', help="Print status.")
         parser.add_argument("--log", action='store_true', help="Prints the last log messages.")
         parser.add_argument("--results", action='store_true', help="Naively prints the result output of the last jobs.")
+        parser.add_argument("--max_jobs", type=int, default=None, help="Used together with --run. Max. jobs to submit.")
         args = parser.parse_args()
 
         if not any(vars(args).values()):
@@ -477,7 +481,8 @@ cd {self.job_dir}
             self.write_input_files()
 
         if args.run:
-            self.run_jobs()
+            max_jobs = args.max_jobs or None
+            self.run_jobs(max_jobs=max_jobs)
 
         if args.status:
             self.print_status()
