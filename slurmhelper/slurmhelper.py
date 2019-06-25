@@ -40,6 +40,9 @@ class SLURMJob():
     # If set, jobs that exceed the max job array size will the split into multiple arrays.
     # Should be at most MaxArraySize.
     max_job_array_size = "auto"
+    # Additional environment variables to set.
+    # E.g. exports = "OMP_NUM_THREADS=2,MKL_NUM_THREADS=2"
+    exports = ""
 
     _job_file = None
     _job_fun_code = None
@@ -248,6 +251,9 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
             limit_concurrent_flag = f"%{self.concurrent_job_limit}" if self.concurrent_job_limit else ""
             array_command = "--array=" + format_consecutive_sequences(indices) + limit_concurrent_flag
             environment_vars = "--export=ALL,JOB_ARRAY_OFFSET={}".format(min_index)
+            if self.exports:
+                environment_vars = environment_vars + "," + self.exports
+                
             command = ["sbatch"] + [array_command] + [environment_vars] + [self.batch_filename]
 
             from subprocess import Popen, PIPE
