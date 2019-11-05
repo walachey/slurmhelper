@@ -16,7 +16,7 @@ dep_links = [str(req_line.url) for req_line in install_reqs]
 
 setup(
     name='slurmhelper',
-    version='1.0',
+    version='1.1',
     description='Small helper tool to create and submit SLURM jobs.',
     author='David Dormagen',
     author_email='czapper@gmx.de',
