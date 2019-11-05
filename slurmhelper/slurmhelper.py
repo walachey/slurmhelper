@@ -3,6 +3,7 @@ import itertools
 import datetime
 import zipfile
 import dill
+import time
 import subprocess
 import errno
 
@@ -470,6 +471,7 @@ cd {self.job_dir}
         parser.add_argument("--log", action='store_true', help="Prints the last log messages.")
         parser.add_argument("--results", action='store_true', help="Naively prints the result output of the last jobs.")
         parser.add_argument("--max_jobs", type=int, default=None, help="Used together with --run. Max. jobs to submit.")
+        parser.add_argument("--autorun", action='store_true', help="Lingers and automatically submits next job array when current one is finished.")
         args = parser.parse_args()
 
         if not any(vars(args).values()):
@@ -486,8 +488,8 @@ cd {self.job_dir}
             self.write_job_file()
             self.write_input_files()
 
+        max_jobs = args.max_jobs or None
         if args.run:
-            max_jobs = args.max_jobs or None
             self.run_jobs(max_jobs=max_jobs)
 
         if args.status:
@@ -496,6 +498,14 @@ cd {self.job_dir}
             self.print_log()
         if args.results:
             self.print_results()
+
+        if args.autorun:
+            while self.get_open_job_count() > 0:
+                os.system("cls||clear")
+                if self.get_running_job_count() == 0:
+                    self.run_jobs(max_jobs=max_jobs)                
+                self.print_status()
+                time.sleep(60 * 2)
 
 
 
