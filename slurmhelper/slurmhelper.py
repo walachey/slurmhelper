@@ -44,6 +44,8 @@ class SLURMJob():
     # Additional environment variables to set.
     # E.g. exports = "OMP_NUM_THREADS=2,MKL_NUM_THREADS=2"
     exports = ""
+    # Can contain the names of additional modules to load (e.g. "OpenBLAS").
+    modules = None
 
     _job_file = None
     _job_fun_code = None
@@ -348,6 +350,12 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
     def batch_filename(self):
         return self.job_dir + "/job_definition.sbatch"
 
+    def get_module_loading_string(self):
+        modules = self.modules or []
+        if self.n_gpus > 0 and "CUDA" not in modules:
+            modules.append("CUDA")
+        return "\n".join(["module load {}".format(m) for m in modules])
+
     def write_batch_file(self, job_array_settings=None):
         time_limit = self.time_limit.total_seconds()
         H, M, S = time_limit // 3600, time_limit % (60 * 60) // 60, time_limit % 60
@@ -358,7 +366,7 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
             qos_string = f"#SBATCH --qos={self.qos}"
         gpu_string = ""
         if self.n_gpus > 0:
-            gpu_string = f"#SBATCH --gres=gpu:{self.n_gpus}\nmodule load CUDA"
+            gpu_string = f"#SBATCH --gres=gpu:{self.n_gpus}"
         task_limit_string = ""
         if self.n_tasks is not None and self.n_tasks > 0:
             task_limit_string = f"#SBATCH --ntasks-per-node={self.n_tasks}"
@@ -389,6 +397,7 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
 {task_limit_string}
 {job_array_settings}
 {nice_value_string}
+{self.get_module_loading_string()}
 # JOB_ARRAY_OFFSET needs to be passed to sbatch (e.g. --export=ALL,JOB_ARRAY_OFFSET=0).
 sub_job_id=$(($SLURM_ARRAY_TASK_ID + $JOB_ARRAY_OFFSET))
 formatted_job_id=`printf %04d ${{sub_job_id}}`
