@@ -482,6 +482,7 @@ cd {self.job_dir}
         parser.add_argument("--results", action='store_true', help="Naively prints the result output of the last jobs.")
         parser.add_argument("--max_jobs", type=int, default=None, help="Used together with --run. Max. jobs to submit.")
         parser.add_argument("--autorun", action='store_true', help="Lingers and automatically submits next job array when current one is finished.")
+        parser.add_argument("--stats", action='store_true', help="Print statistics about finished jobs.")
         args = parser.parse_args()
 
         if not any(vars(args).values()):
@@ -507,6 +508,9 @@ cd {self.job_dir}
 
         if args.status:
             self.print_status()
+        if args.stats:
+            from . import stats
+            stats.analyse_log_file_dir(self.log_dir)
         if args.log:
             self.print_log()
         if args.results:
@@ -518,6 +522,9 @@ cd {self.job_dir}
                 if self.get_running_job_count() == 0:
                     self.run_jobs(max_jobs=max_jobs)                
                 self.print_status()
+                if args.stats:
+                    from . import stats
+                    stats.analyse_log_file_dir(self.log_dir)
                 time.sleep(60 * 2)
 
 
