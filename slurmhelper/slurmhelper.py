@@ -476,6 +476,7 @@ cd {self.job_dir}
         parser.add_argument("--cancel", action='store_true', help="Cancel running jobs.")
         parser.add_argument("--run", action='store_true', help="Run remaining jobs.")
         parser.add_argument("--clean", action='store_true', help="Clean up log/batch directory (not results, though.).")
+        parser.add_argument("--removelogs", action='store_true', help="Clean up just the log directory.")
         parser.add_argument("--status", action='store_true', help="Print status.")
         parser.add_argument("--log", action='store_true', help="Prints the last log messages.")
         parser.add_argument("--results", action='store_true', help="Naively prints the result output of the last jobs.")
@@ -488,7 +489,10 @@ cd {self.job_dir}
         
         if args.cancel:
             self.cancel_running_jobs()
-            
+
+        if args.removelogs:
+            self.clear_log_dir()
+
         if args.clean:
             self.clear_helper_directories()
 
