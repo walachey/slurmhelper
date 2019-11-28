@@ -179,7 +179,7 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
         if output:
             print(output.decode("ascii"))
 
-    def run_jobs(self, max_jobs=None):
+    def run_jobs(self, max_jobs=None, write_job_file=True):
         if self.get_running_job_count() != 0:
             print("Jobs are currently in the queue or running! Aborting.")
             return
@@ -188,6 +188,9 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
             print("No prepared jobs to be run.")
             return
         
+        if write_job_file:
+            self.write_job_file()
+
         # Collect job array indices to run.
         indices = []
         for f in jobs:
@@ -499,7 +502,6 @@ cd {self.job_dir}
 
         if args.createjobs:
             self.ensure_directories()
-            self.write_job_file()
             self.write_input_files()
 
         max_jobs = args.max_jobs or None
