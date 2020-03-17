@@ -36,6 +36,7 @@ class SLURMJob():
     time_limit = datetime.timedelta(hours=1)
     partition = None
     qos = None
+    job_array_settings = None
     nice = None
     concurrent_job_limit = None
     # If set, jobs that exceed the max job array size will the split into multiple arrays.
@@ -247,7 +248,7 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
                 del indices[:n_indices_in_chunk]
                 index_groups.append(one_job_indices)
         
-        self.write_batch_file(job_array_settings=None)
+        self.write_batch_file()
 
         total_submitted_jobs = 0
         for idx, indices in enumerate(index_groups):
@@ -359,7 +360,7 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
             modules.append("CUDA")
         return "\n".join(["module load {}".format(m) for m in modules])
 
-    def write_batch_file(self, job_array_settings=None):
+    def write_batch_file(self):
         time_limit = self.time_limit.total_seconds()
         H, M, S = time_limit // 3600, time_limit % (60 * 60) // 60, time_limit % 60
         time_limit = "{:02d}:{:02d}:{:02d}".format(int(H), int(M), int(S))
@@ -373,7 +374,7 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
         task_limit_string = ""
         if self.n_tasks is not None and self.n_tasks > 0:
             task_limit_string = f"#SBATCH --ntasks-per-node={self.n_tasks}"
-        if job_array_settings:
+        if self.job_array_settings:
             job_array_settings = "#SBATCH " + job_array_settings
         else:
             job_array_settings = ""
