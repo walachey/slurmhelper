@@ -46,6 +46,9 @@ class SLURMJob():
     exports = ""
     # Can contain the names of additional modules to load (e.g. "OpenBLAS").
     modules = None
+    # Will be added after the other #SBATCH commands in the .sbatch file.
+    # This can be used for other settings that not yet have an own property.
+    custom_preamble = ""
 
     _job_file = None
     _job_fun_code = None
@@ -395,6 +398,7 @@ with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATE
 {gpu_string}
 {task_limit_string}
 {nice_value_string}
+{self.custom_preamble}
 {self.get_module_loading_string()}
 # JOB_ARRAY_OFFSET needs to be passed to sbatch (e.g. --export=ALL,JOB_ARRAY_OFFSET=0).
 sub_job_id=$(($SLURM_ARRAY_TASK_ID + $JOB_ARRAY_OFFSET))
