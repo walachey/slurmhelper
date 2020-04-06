@@ -49,6 +49,9 @@ class SLURMJob():
     # Will be added after the other #SBATCH commands in the .sbatch file.
     # This can be used for other settings that not yet have an own property.
     custom_preamble = ""
+    # Whether to stream the results into a file instead of saving everything in the end.
+    # Might save some RAM but needs a generator function.
+    save_as_stream = False
 
     _job_file = None
     _job_fun_code = None
@@ -100,6 +103,26 @@ class SLURMJob():
                 exit(1)
             job_fun_name = "job.run"
             job_definition = 'sys.path.append("{}")\nimport {} as job'.format(*self.get_original_job_path_filename(), self._job_file)
+
+        # Default: Just save everything into a file in the end
+        saving_strategy = """
+with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+    with zf.open("results.dill", "w", force_zip64=True) as f:
+        dill.dump(results, f)
+    with zf.open("kwargs.dill", "w") as f:
+        dill.dump(kwargs, f)
+        """
+
+        if self.save_as_stream:
+            saving_strategy = """
+with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+    with zf.open("results.dill", "w", force_zip64=True) as f:
+        for result in results:
+            dill.dump(result, f)
+    with zf.open("kwargs.dill", "w") as f:
+        dill.dump(kwargs, f)
+            """
+
         job_file = """
 import sys, warnings, zipfile, dill
 job_id = int(sys.argv[1])
@@ -118,14 +141,11 @@ with warnings.catch_warnings():
     {}
     results = {}(**kwargs)
 
-with zipfile.ZipFile(results_filename, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-    with zf.open("results.dill", "w") as f:
-            dill.dump(results, f)
-    with zf.open("kwargs.dill", "w") as f:
-            dill.dump(kwargs, f)
+{}
+
 """.format(self._get_output_filename_format_string(),
             self._get_input_filename_format_string(),
-            job_definition, job_fun_name)
+            job_definition, job_fun_name, saving_strategy)
 
         with open(self.job_filename, "w") as f:
             f.write(job_file)
@@ -446,8 +466,18 @@ cd {self.job_dir}
 
     def load_kwargs_results_from_result_file(self, filename):
         with zipfile.ZipFile(self.output_dir + filename, mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
-            with zf.open("results.dill", "r") as f:
-                results = dill.load(f)
+            if not self.save_as_stream:
+                with zf.open("results.dill", "r") as f:
+                    results = dill.load(f)
+            else:
+                results = []
+                with zf.open("results.dill", "r") as f:
+                    while True:
+                        try:
+                            result = dill.load(f)
+                            results.append(result)
+                        except EOFError:
+                            break
             with zf.open("kwargs.dill", "r") as f:
                 kwargs = dill.load(f)
             return kwargs, results
