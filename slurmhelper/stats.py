@@ -9,8 +9,13 @@ import shutil
 import sys
 
 def parse_cpu_time(s: str):
+    # Additional parsing for 24h periods..
+    days = 0
+    if "-" in s:
+        days, s = s.split("-")
+        days = int(days)
     h, m, s = [int(i) for i in s.split(":")]
-    return datetime.timedelta(hours=h, minutes=m, seconds=s)
+    return datetime.timedelta(days=days, hours=h, minutes=m, seconds=s)
 
 def parse_memory(s: str):
     s = s.replace(" ", "")
