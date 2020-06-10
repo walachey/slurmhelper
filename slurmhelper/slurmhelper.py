@@ -495,7 +495,14 @@ cd {self.job_dir}
         if self.get_finished_job_count() == 0:
             raise ValueError("There are no finished jobs.")
         for filename in self.get_result_filenames():
-            kwargs, results = self.load_kwargs_results_from_result_file(filename)
+            try:
+                kwargs, results = self.load_kwargs_results_from_result_file(filename)
+            except (zipfile.BadZipFile, KeyError, EOFError) as e:
+                # This probably means that a job failed while writing the zipfile (and is thus still open).
+                if not ignore_open_jobs:
+                    raise
+                else:
+                    continue
             yield kwargs, results
 
     def __call__(self):
