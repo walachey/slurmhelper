@@ -464,8 +464,13 @@ cd {self.job_dir}
     def get_result_filenames(self):
         return list(sorted((f for f in os.listdir(self.output_dir) if f.endswith(".zip"))))
 
-    def load_kwargs_results_from_result_file(self, filename):
+    def load_kwargs_results_from_result_file(self, filename, only_load_kwargs=False):
         with zipfile.ZipFile(self.output_dir + filename, mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
+            with zf.open("kwargs.dill", "r") as f:
+                kwargs = dill.load(f)
+            if only_load_kwargs:
+                return kwargs, None
+                
             if not self.save_as_stream:
                 with zf.open("results.dill", "r") as f:
                     results = dill.load(f)
@@ -478,8 +483,7 @@ cd {self.job_dir}
                             results.append(result)
                         except EOFError:
                             break
-            with zf.open("kwargs.dill", "r") as f:
-                kwargs = dill.load(f)
+            
             return kwargs, results
 
     def print_results(self):
