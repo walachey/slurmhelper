@@ -167,7 +167,10 @@ with warnings.catch_warnings():
         return self.job_dir + "jobs/"
 
     def get_open_job_count(self):
-        return len([f for f in os.listdir(self.input_dir) if f.endswith(".dill")])
+        try:
+            return len([f for f in os.listdir(self.input_dir) if f.endswith(".dill")])
+        except FileNotFoundError:
+            return 0
 
     def get_finished_job_directories(self):
         return itertools.chain((self.output_dir,), self.additional_output_dirs)
