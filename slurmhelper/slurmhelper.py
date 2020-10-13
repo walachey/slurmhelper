@@ -35,8 +35,8 @@ class SLURMJob():
     n_gpus = 0
     max_memory = "2GB"
     time_limit = datetime.timedelta(hours=1)
-    partition = None
-    qos = None
+    partition = "main"
+    qos = "standard"
     nice = None
     concurrent_job_limit = None
     # If set, jobs that exceed the max job array size will the split into multiple arrays.
