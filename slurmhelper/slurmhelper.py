@@ -53,8 +53,6 @@ class SLURMJob():
     # Whether to stream the results into a file instead of saving everything in the end.
     # Might save some RAM but needs a generator function.
     save_as_stream = False
-    # The daemon mount dir is the local path where the slurm-accessible file system is mounted.
-    daemon_mount_dir = None
 
     _job_file = None
     _job_fun_code = None
@@ -62,10 +60,16 @@ class SLURMJob():
     # The username used in the slurm system. This is usually the system user name and is retrieved automatically if not set.
     username = None
 
-    def __init__(self, name, job_root):
+    def __init__(self, name, job_root, daemon_mount_dir=None):
         self.additional_output_dirs = []
         self.name = name
         self.job_root = job_root
+        # The daemon mount dir is the local path where the slurm-accessible file system is mounted.
+        self.daemon_mount_dir = daemon_mount_dir
+        if self.is_daemon_client():
+            self.map = self.map_blocking
+        else:
+            self.map = self.map_async
 
     def set_command(self, command="python3"):
         self.command = command
@@ -89,43 +93,47 @@ class SLURMJob():
     def get_daemon_mount_root(self):
         return self.daemon_mount_dir + "/" + self.name
 
-    def map(self, fun, args):
-        if self.is_daemon_client():
-            if self.get_open_job_count() > 0:
-                raise ValueError("Jobs are still running and/or failed.")
-            self.clear_helper_directories()
-            self.clear_result_files()
+    def map_async(self, fun, args):
+        self.set_job_arguments(args)
+        self.set_job_fun(fun)
+
+    def map_blocking(self, fun, args):
+        assert self.is_daemon_client()
+
+        if self.get_open_job_count() > 0:
+            raise ValueError("Jobs are still running and/or failed.")
+        self.clear_helper_directories()
+        self.clear_result_files()
 
         self.set_job_arguments(args)
         self.set_job_fun(fun)
 
-        if self.is_daemon_client():
-            import tqdm.auto
+        import tqdm.auto
 
-            self.write_job_file()
-            self.write_batch_file()
-            self.write_input_files()
+        self.write_job_file()
+        self.write_batch_file()
+        self.write_input_files()
 
-            n_jobs = self.get_open_job_count()
-            if n_jobs == 0:
-                raise ValueError("No jobs were created.")
+        n_jobs = self.get_open_job_count()
+        if n_jobs == 0:
+            raise ValueError("No jobs were created.")
 
-            trange = tqdm.auto.tqdm(total=n_jobs)
-            currently_done = 0
-            while True:
-                done = self.get_finished_job_count()
+        trange = tqdm.auto.tqdm(total=n_jobs)
+        currently_done = 0
+        while True:
+            done = self.get_finished_job_count()
 
-                if done > currently_done:
-                    trange.update(done - currently_done)
-                    currently_done = done
+            if done > currently_done:
+                trange.update(done - currently_done)
+                currently_done = done
 
-                if done >= n_jobs:
-                    break
+            if done >= n_jobs:
+                break
 
-                time.sleep(2)
-            trange.close()
+            time.sleep(2)
+        trange.close()
 
-            yield from self.items()
+        yield from self.items()
 
     def add_output_dir(self, dir):
         self.additional_output_dirs.append(dir)
