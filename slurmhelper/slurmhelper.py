@@ -11,8 +11,8 @@ import errno
 progress_bar = lambda x, **kwargs: x
 
 try:
-    import tqdm
-    progress_bar = tqdm.tqdm
+    import tqdm.auto
+    progress_bar = tqdm.auto.tqdm
 except:
     pass
 
@@ -53,6 +53,8 @@ class SLURMJob():
     # Whether to stream the results into a file instead of saving everything in the end.
     # Might save some RAM but needs a generator function.
     save_as_stream = False
+    # The daemon mount dir is the local path where the slurm-accessible file system is mounted.
+    daemon_mount_dir = None
 
     _job_file = None
     _job_fun_code = None
@@ -81,9 +83,49 @@ class SLURMJob():
         self._job_fun_code = "    ".join(lines)
         self._job_fun_name = [f for n, f in inspect.getmembers(fun) if n == "__name__"][0]
 
+    def is_daemon_client(self):
+        return self.daemon_mount_dir is not None
+
+    def get_daemon_mount_root(self):
+        return self.daemon_mount_dir + "/" + self.name
+
     def map(self, fun, args):
+        if self.is_daemon_client():
+            if self.get_open_job_count() > 0:
+                raise ValueError("Jobs are still running and/or failed.")
+            self.clear_helper_directories()
+            self.clear_result_files()
+
         self.set_job_arguments(args)
         self.set_job_fun(fun)
+
+        if self.is_daemon_client():
+            import tqdm.auto
+
+            self.write_job_file()
+            self.write_batch_file()
+            self.write_input_files()
+
+            n_jobs = self.get_open_job_count()
+            if n_jobs == 0:
+                raise ValueError("No jobs were created.")
+
+            trange = tqdm.auto.tqdm(total=n_jobs)
+            currently_done = 0
+            while True:
+                done = self.get_finished_job_count()
+
+                if done > currently_done:
+                    trange.update(done - currently_done)
+                    currently_done = done
+
+                if done >= n_jobs:
+                    break
+
+                time.sleep(2)
+            trange.close()
+
+            yield from self.items()
 
     def add_output_dir(self, dir):
         self.additional_output_dirs.append(dir)
@@ -92,9 +134,13 @@ class SLURMJob():
         assert self._job_file
         return os.path.split(self._job_file)
 
-    @property
-    def job_filename(self):
-        return self.job_dir + "run_job.py"
+    def get_job_filename(self, local_path=False):
+        return self.get_job_dir(local_path=local_path) + "run_job.py"
+
+    def get_username(self):
+        if self.username is None:
+            self.username = getpass.getuser()
+        return self.username
 
     def write_job_file(self):
         if self._job_fun_name is not None:
@@ -150,37 +196,38 @@ with warnings.catch_warnings():
             self._get_input_filename_format_string(),
             job_definition, job_fun_name, saving_strategy)
 
-        with open(self.job_filename, "w") as f:
+        with open(self.get_job_filename(local_path=True), "w") as f:
             f.write(job_file)
 
-    @property
-    def job_dir(self):
-        return self.job_root + "/" + self.name + "/"
+    def get_job_root(self, local_path=False):
+        if local_path and self.is_daemon_client():
+            return self.daemon_mount_dir
+        return self.job_root
+
+    def get_job_dir(self, local_path=False):
+        return self.get_job_root(local_path=local_path) + "/" + self.name + "/"
     
-    @property
-    def output_dir(self):
-        return self.job_dir + "output/"
+    def get_output_dir(self, local_path=False):
+        return self.get_job_dir(local_path=local_path) + "output/"
 
-    @property
-    def log_dir(self):
-        return self.job_dir + "log/"
+    def get_log_dir(self, local_path=False):
+        return self.get_job_dir(local_path=local_path) + "log/"
 
-    @property   
-    def input_dir(self):
-        return self.job_dir + "jobs/"
+    def get_input_dir(self, local_path=False):
+        return self.get_job_dir(local_path=local_path) + "jobs/"
 
     def get_open_job_count(self):
         try:
-            return len([f for f in os.listdir(self.input_dir) if f.endswith(".dill")])
+            return len([f for f in os.listdir(self.get_input_dir(local_path=True)) if f.endswith(".dill")])
         except FileNotFoundError:
             return 0
 
-    def get_finished_job_directories(self):
-        return itertools.chain((self.output_dir,), self.additional_output_dirs)
+    def get_finished_job_directories(self, local_path=False):
+        return itertools.chain((self.get_output_dir(local_path=local_path),), self.additional_output_dirs)
 
     def get_finished_job_count(self):
         count = 0
-        for dir in self.get_finished_job_directories():
+        for dir in self.get_finished_job_directories(local_path=True):
             count += len([f for f in os.listdir(dir) if f.endswith(".zip")])
         return count
 
@@ -208,17 +255,18 @@ with warnings.catch_warnings():
         if output:
             print(output.decode("ascii"))
 
-    def run_jobs(self, max_jobs=None, write_job_file=True):
+    def run_jobs(self, max_jobs=None, write_job_files=True):
         if self.get_running_job_count() != 0:
             print("Jobs are currently in the queue or running! Aborting.")
             return
-        jobs = os.listdir(self.input_dir)
+        jobs = os.listdir(self.get_input_dir(local_path=True))
         if len(jobs) == 0:
             print("No prepared jobs to be run.")
             return
         
-        if write_job_file:
+        if write_job_files:
             self.write_job_file()
+            self.write_batch_file()
 
         # Collect job array indices to run.
         indices = []
@@ -276,8 +324,6 @@ with warnings.catch_warnings():
                 del indices[:n_indices_in_chunk]
                 index_groups.append(one_job_indices)
         
-        self.write_batch_file()
-
         total_submitted_jobs = 0
         for idx, indices in enumerate(index_groups):
             min_index = min(indices)
@@ -289,7 +335,7 @@ with warnings.catch_warnings():
             if self.exports:
                 environment_vars = environment_vars + "," + self.exports
                 
-            command = ["sbatch"] + [array_command] + [environment_vars] + [self.batch_filename]
+            command = ["sbatch"] + [array_command] + [environment_vars] + [self.get_batch_filename()]
 
             from subprocess import Popen, PIPE
             p = Popen(command, stdin=PIPE, stdout=PIPE, stderr=PIPE)
@@ -307,57 +353,64 @@ with warnings.catch_warnings():
                 total_submitted_jobs += len(indices)
                 if total_submitted_jobs >= max_job_array_size:
                     break
-        
+    
+    def clear_directory(self, directory, file_ending):
+        try:
+            for f in os.listdir(directory):
+                if f.endswith(file_ending):
+                    os.remove(directory + f)
+        except FileNotFoundError:
+            pass
 
     def clear_input_files(self):
-        try:
-            for f in os.listdir(self.input_dir):
-                if f.endswith(".dill"):
-                    os.remove(self.input_dir + f)
-        except FileNotFoundError:
-            pass
+        self.clear_directory(self.get_input_dir(local_path=True), ".dill")
+
+    def clear_result_files(self):
+        # Currently not part of the public interface to prevent accidental deletion.
+        # So, assert we are running as a daemon.
+        assert self.is_daemon_client()
+        self.clear_directory(self.get_output_dir(local_path=True), ".zip")
 
     def clear_log_dir(self):
-        try:
-            for f in os.listdir(self.log_dir):
-                if f.endswith(".txt"):
-                    os.remove(self.log_dir + f)
-        except FileNotFoundError:
-            pass
+        self.clear_directory(self.get_log_dir(local_path=True), ".txt")
 
     def ensure_directories(self):
-        try_make_dir(self.job_dir)
-        try_make_dir(self.output_dir)
-        try_make_dir(self.log_dir)
-        try_make_dir(self.input_dir)
+        try_make_dir(self.get_job_dir(local_path=True))
+        try_make_dir(self.get_output_dir(local_path=True))
+        try_make_dir(self.get_log_dir(local_path=True))
+        try_make_dir(self.get_input_dir(local_path=True))
 
     def clear_helper_directories(self):
         self.clear_input_files()
         self.clear_log_dir()
 
-    def _get_output_filename_format_string(self):
-        return f"{self.output_dir}/" + "job_{:04d}.zip"
+    def _get_output_filename_format_string(self, local_path=False):
+        return self.get_output_dir(local_path=local_path) + "/job_{:04d}.zip"
 
-    def _get_output_filename_for_job_id(self, job_id):
+    def _get_output_filename_for_job_id(self, job_id, local_path=False):
         output_filename_tail = f"job_{job_id:04d}.zip"
-        output_filename = f"{self.output_dir}/{output_filename_tail}"
+        output_filename = f"{self.get_output_dir(local_path=local_path)}/{output_filename_tail}"
         return output_filename, output_filename_tail
 
-    def _get_input_filename_format_string(self):
-        return self.input_dir + "/job_{:04d}.dill"
+    def _get_input_filename_format_string(self, local_path=False):
+        return self.get_input_dir(local_path=local_path) + "/job_{:04d}.dill"
 
     def write_input_files(self):
         created = 0
         skipped = 0
         self.clear_input_files()
 
-        for idx, args in progress_bar(enumerate(self.job_args)):
-            input_filename = self.input_dir + "job_{:04d}.dill".format(idx)
-            _, output_filename_tail = self._get_output_filename_for_job_id(idx)
+        iterable = enumerate(self.job_args)
+        if not self.is_daemon_client():
+            iterable = progress_bar(iterable)
+
+        for idx, args in iterable:
+            input_filename = self.get_input_dir(local_path=True) + "job_{:04d}.dill".format(idx)
+            _, output_filename_tail = self._get_output_filename_for_job_id(idx, local_path=True)
 
             found = False
             # Check if valid results exist.
-            for dir in self.get_finished_job_directories():
+            for dir in self.get_finished_job_directories(local_path=True):
                 local_filename = dir + "/" + output_filename_tail
                 if os.path.isfile(local_filename):
                     # Check if not corrupt.
@@ -376,11 +429,15 @@ with warnings.catch_warnings():
             with open(input_filename, "wb") as f:
                 dill.dump(args, f)
 
-        print("Files created: {}, skipped: {}.".format(created, skipped))
+        if not self.is_daemon_client():
+            print("Files created: {}, skipped: {}.".format(created, skipped))
 
-    @property
-    def batch_filename(self):
-        return self.job_dir + "/job_definition.sbatch"
+    def createjobs(self):
+        self.ensure_directories()
+        self.write_input_files()
+
+    def get_batch_filename(self, local_path=False):
+        return self.get_job_dir(local_path=local_path) + "/job_definition.sbatch"
 
     def get_module_loading_string(self):
         modules = self.modules or []
@@ -410,11 +467,11 @@ with warnings.catch_warnings():
             partition_string = f"#SBATCH --partition={self.partition}"
         elif self.n_gpus > 0:
             partition_string = "#SBATCH --partition=gpu"
-
+        
         sbatch = f"""#!/bin/bash
 #SBATCH --job-name={self.name}
-#SBATCH --error={self.log_dir}job_%a_%A.error.txt
-#SBATCH --output={self.log_dir}job_%a_%A.log.txt
+#SBATCH --error={self.get_log_dir()}job_%a_%A.error.txt
+#SBATCH --output={self.get_log_dir()}job_%a_%A.log.txt
 #SBATCH --time={time_limit}
 #SBATCH --mem={self.max_memory}
 #SBATCH --nodes={self.n_nodes}
@@ -429,15 +486,15 @@ with warnings.catch_warnings():
 # JOB_ARRAY_OFFSET needs to be passed to sbatch (e.g. --export=ALL,JOB_ARRAY_OFFSET=0).
 sub_job_id=$(($SLURM_ARRAY_TASK_ID + $JOB_ARRAY_OFFSET))
 formatted_job_id=`printf %04d ${{sub_job_id}}`
-cd {self.job_dir}
-{self.command} run_job.py ${{sub_job_id}} && rm {self.input_dir}job_${{formatted_job_id}}.dill
+cd {self.get_job_dir()}
+{self.command} run_job.py ${{sub_job_id}} && rm {self.get_input_dir()}job_${{formatted_job_id}}.dill
 """
-        with open(self.batch_filename, "w") as f:
+        with open(self.get_batch_filename(local_path=True), "w") as f:
             f.write(sbatch)
 
 
     def print_status(self):
-        print("Job {}, residing in {}".format(self.name, self.job_dir))
+        print("Job {}, residing in {}".format(self.name, self.get_job_dir(local_path=True)))
         print("Working on callable {}.".format(self._job_file or self._job_fun_name))
         if self.partition is None:
             print("Using default partition (see scontrol show partition).")
@@ -453,7 +510,7 @@ cd {self.job_dir}
             print(f"Splitting up job arrays larger than {self.max_job_array_size}")
         print(f"Resources per task: nodes: {self.n_nodes}, task limit: {self.n_tasks}, cpus: {self.n_cpus}, memory: {self.max_memory}")
         print("Time limit per job: {}, concurrent job limit: {}".format(self.time_limit, self.concurrent_job_limit))
-        if os.path.isdir(self.job_dir):
+        if os.path.isdir(self.get_job_dir(local_path=True)):
             n_open, n_done, n_submitted = self.get_open_job_count(), self.get_finished_job_count(), self.get_running_job_count()
             n_pending, n_running = self.get_running_job_count("PD"), self.get_running_job_count("R")
             print("Jobs prepared: {} (running: {}, pending: {}, total queued: {})".format(n_open, n_running, n_pending, n_submitted))
@@ -462,16 +519,17 @@ cd {self.job_dir}
             print("Jobs not created. Try --createjobs.")
 
     def print_log(self):
-        files = list(sorted((f for f in os.listdir(self.log_dir) if f.endswith(".txt"))))
+        directory = self.get_log_dir(local_path=True)
+        files = list(sorted((f for f in os.listdir(directory) if f.endswith(".txt"))))
         for filename in files:
-            with open(self.log_dir + filename, 'r') as f:
+            with open(directory + filename, 'r') as f:
                 print(f.read())
 
     def get_result_filenames(self):
-        return list(sorted((f for f in os.listdir(self.output_dir) if f.endswith(".zip"))))
+        return list(sorted((f for f in os.listdir(self.get_output_dir(local_path=True)) if f.endswith(".zip"))))
 
     def load_kwargs_results_from_result_file(self, filename, only_load_kwargs=False):
-        with zipfile.ZipFile(self.output_dir + filename, mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
+        with zipfile.ZipFile(self.get_output_dir(local_path=True) + filename, mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
             with zf.open("kwargs.dill", "r") as f:
                 kwargs = dill.load(f)
             if only_load_kwargs:
@@ -531,6 +589,7 @@ cd {self.job_dir}
         parser.add_argument("--results", action='store_true', help="Naively prints the result output of the last jobs.")
         parser.add_argument("--max_jobs", type=int, default=None, help="Used together with --run. Max. jobs to submit.")
         parser.add_argument("--autorun", action='store_true', help="Lingers and automatically submits next job array when current one is finished.")
+        parser.add_argument("--daemon", action='store_true', help="Same as autorun but does not exit when all jobs are finished.")
         parser.add_argument("--stats", action='store_true', help="Print statistics about finished jobs.")
         args = parser.parse_args()
 
@@ -547,8 +606,7 @@ cd {self.job_dir}
             self.clear_helper_directories()
 
         if args.createjobs:
-            self.ensure_directories()
-            self.write_input_files()
+            self.createjobs()
 
         max_jobs = args.max_jobs or None
         if args.run:
@@ -558,22 +616,26 @@ cd {self.job_dir}
             self.print_status()
         if args.stats:
             from . import stats
-            stats.analyse_log_file_dir(self.log_dir)
+            stats.analyse_log_file_dir(self.get_log_dir(local_path=True))
         if args.log:
             self.print_log()
         if args.results:
             self.print_results()
 
-        if args.autorun:
-            while self.get_open_job_count() > 0:
+        if args.autorun or args.daemon:
+            while args.daemon or (self.get_open_job_count() > 0):
                 os.system("cls||clear")
                 if self.get_running_job_count() == 0:
-                    self.run_jobs(max_jobs=max_jobs)                
+                    self.run_jobs(max_jobs=max_jobs, write_job_files=not args.daemon)                
                 self.print_status()
                 if args.stats:
                     from . import stats
-                    stats.analyse_log_file_dir(self.log_dir)
-                time.sleep(60 * 2)
+                    stats.analyse_log_file_dir(self.get_log_dir(local_path=True))
+
+                if args.daemon:
+                    time.sleep(10)
+                else:
+                    time.sleep(60 * 2)
 
 
 
