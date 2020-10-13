@@ -3,6 +3,7 @@ import itertools
 import datetime
 import zipfile
 import dill
+import getpass
 import time
 import subprocess
 import errno
@@ -56,6 +57,8 @@ class SLURMJob():
     _job_file = None
     _job_fun_code = None
     _job_fun_name = None
+    # The username used in the slurm system. This is usually the system user name and is retrieved automatically if not set.
+    username = None
 
     def __init__(self, name, job_root):
         self.additional_output_dirs = []
@@ -184,7 +187,7 @@ with warnings.catch_warnings():
     def get_running_jobs(self, state=""):
         from subprocess import Popen, PIPE
         state = "" if not state else f"-t {state}"
-        output, _ = Popen([f'squeue -r --format="%A %F %j" {state} --name="{self.name}"'], stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=True).communicate()
+        output, _ = Popen([f'squeue -u {self.get_username()} -r --format="%A %F %j" {state} --name="{self.name}"'], stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=True).communicate()
         output = [f for f in output.decode("ascii").split("\n")[1:] if f] # Skip the header line.
         output = [f.split(" ") for f in output]
         return output
