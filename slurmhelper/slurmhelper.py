@@ -236,7 +236,10 @@ with warnings.catch_warnings():
     def get_finished_job_count(self):
         count = 0
         for dir in self.get_finished_job_directories(local_path=True):
-            count += len([f for f in os.listdir(dir) if f.endswith(".zip")])
+            try:
+                count += len([f for f in os.listdir(dir) if f.endswith(".zip")])
+            except FileNotFoundError:
+                pass
         return count
 
     def get_running_jobs(self, state=""):
