@@ -53,8 +53,8 @@ class SLURMJob():
     # Whether to stream the results into a file instead of saving everything in the end.
     # Might save some RAM but needs a generator function.
     save_as_stream = False
-    # python function to collect single jobs and concatenate them
-    concat_fun = None
+    # python function to postprocess jobs
+    postprocess_fun = None
 
     _job_file = None
     _job_fun_code = None
@@ -89,15 +89,15 @@ class SLURMJob():
         self._job_fun_code = "    ".join(lines)
         self._job_fun_name = [f for n, f in inspect.getmembers(fun) if n == "__name__"][0]
 
-    def set_concat_fun(self, concat_fun):
-        self.concat_fun = concat_fun
+    def set_postprocess_fun(self, postprocess_fun):
+        self.postprocess_fun = postprocess_fun
 
-    def get_concat_fun(self):
-        if self.concat_fun is not None:
-            return self.concat_fun
+    def get_postprocess_fun(self):
+        if self.postprocess_fun is not None:
+            return self.postprocess_fun
         else:
-            raise ValueError("No function for concatenating the jobs is defined. Use job.set_concat_fun() "
-                             "to define first concat function."
+            raise ValueError("No function for postprocessing the jobs is defined. Use job.set_postprocess_fun() "
+                             "to define first the postprocess function."
                              )
 
     def is_daemon_client(self):
@@ -279,9 +279,9 @@ with warnings.catch_warnings():
         if output:
             print(output.decode("ascii"))
 
-    def concat_jobs(self):
-        concat_fun = self.get_concat_fun()
-        concat_fun(self)
+    def postprocess_jobs(self):
+        postprocess_fun = self.get_postprocess_fun()
+        postprocess_fun(self)
 
     def run_jobs(self, max_jobs=None, write_job_files=True):
         if self.get_running_job_count() != 0:
@@ -619,7 +619,7 @@ cd {self.get_job_dir()}
         parser.add_argument("--autorun", action='store_true', help="Lingers and automatically submits next job array when current one is finished.")
         parser.add_argument("--daemon", action='store_true', help="Same as autorun but does not exit when all jobs are finished.")
         parser.add_argument("--stats", action='store_true', help="Print statistics about finished jobs.")
-        parser.add_argument("--concat", action='store_true', help="Concatenates jobs from job arrays by defined function.")
+        parser.add_argument("--postprocess", action='store_true', help="Postprocess jobs from job arrays by defined function.")
         args = parser.parse_args()
 
         if not any(vars(args).values()):
@@ -666,8 +666,8 @@ cd {self.get_job_dir()}
                 else:
                     time.sleep(60 * 2)
 
-        if args.concat:
-            self.concat_jobs()
+        if args.postprocess:
+            self.postprocess_jobs()
 
 
 
